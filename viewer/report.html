@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IFC Model Diff</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./lib/three.module.js",
+    "three/addons/": "./lib/addons/"
+  }
+}
+</script>
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">IFC Model Diff <span class="ver" id="brand-ver"></span></div>
+
+  <div class="mode-switch" id="mode-switch">
+    <button data-mode="split" class="active">Side-by-Side</button>
+    <button data-mode="merged">Merged View</button>
+  </div>
+
+  <div class="toggles" id="toggles">
+    <label><input type="checkbox" data-status="added" checked><i class="dot" style="--c:#16a34a"></i>Added <span class="cnt" id="cnt-added"></span></label>
+    <label><input type="checkbox" data-status="deleted" checked><i class="dot" style="--c:#ff0000"></i>Deleted <span class="cnt" id="cnt-deleted"></span></label>
+    <label><input type="checkbox" data-status="geom" checked><i class="dot" style="--c:#eab308"></i>Geometry <span class="cnt" id="cnt-geom"></span></label>
+    <label><input type="checkbox" data-status="param" checked><i class="dot" style="--c:#2563eb"></i>Parameters <span class="cnt" id="cnt-param"></span></label>
+    <label><input type="checkbox" data-status="both" checked><i class="dot" style="--c:#7c3aed"></i>Both <span class="cnt" id="cnt-both"></span></label>
+    <label><input type="checkbox" data-status="unchanged" checked><i class="dot" style="--c:#94a3b8"></i>Unchanged <span class="cnt" id="cnt-unchanged"></span></label>
+  </div>
+
+  <div class="actions">
+    <button class="btn primary" id="btn-load" title="Pick two IFC files and compare them locally">Load IFC</button>
+    <button class="btn" id="btn-fit" title="Fit the whole model into view">Fit View</button>
+    <button class="btn" id="btn-diff" title="Focus the view on all changed elements">Focus Changes</button>
+    <button class="btn" id="btn-panel" title="Show/hide the change list">Changes</button>
+  </div>
+</header>
+
+<main>
+  <aside id="panel">
+    <div class="panel-head">
+      <span>Changed Elements</span>
+      <button class="icon-btn" id="panel-close" title="Collapse">×</button>
+    </div>
+    <input id="search" type="search" placeholder="Search name / type / GUID" autocomplete="off">
+    <div id="stats"></div>
+    <div id="list"></div>
+  </aside>
+
+  <div id="viewport">
+    <canvas id="c3d"></canvas>
+    <div id="divider"><div class="handle"></div></div>
+    <div id="label-old" class="hint-chip"></div>
+    <div id="label-new" class="hint-chip"></div>
+    <div id="status"></div>
+  </div>
+</main>
+
+<div id="loader-dialog" class="dialog-overlay" hidden>
+  <div class="dialog">
+    <div class="dialog-title">Load IFC Models</div>
+    <p class="dialog-hint">Pick the old and new IFC files. The comparison runs locally on this machine (files are never uploaded to the internet).</p>
+    <label class="file-row">
+      <span class="file-label">Old model</span>
+      <input type="file" id="file-old" accept=".ifc">
+      <span id="name-old" class="file-name"></span>
+    </label>
+    <label class="file-row">
+      <span class="file-label">New model</span>
+      <input type="file" id="file-new" accept=".ifc">
+      <span id="name-new" class="file-name"></span>
+    </label>
+    <div id="loader-msg" class="dialog-msg"></div>
+    <div class="dialog-actions">
+      <button class="btn" id="loader-cancel">Cancel</button>
+      <button class="btn primary" id="loader-start" disabled>Compare</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// Boot self-check: show clear guidance instead of a dead page when the page
+// scripts cannot run (file://, unsupported importmap, or module load failure).
+(function () {
+  var overlay = document.createElement('div');
+  overlay.className = 'boot-overlay';
+  overlay.style.display = 'none';
+  overlay.innerHTML =
+    '<div class="boot-card">' +
+      '<div class="boot-title">Page scripts failed to run</div>' +
+      '<div class="boot-body"></div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+
+  function fail(html) {
+    overlay.querySelector('.boot-body').innerHTML = html;
+    overlay.style.display = 'flex';
+  }
+
+  if (location.protocol === 'file:') {
+    fail('<p>This report must be served over local HTTP (browsers block page scripts on file://).</p>' +
+      '<p>Run the following command in the project directory:</p>' +
+      '<pre>python cli.py serve out</pre>' +
+      '<p>Then open <b>http://localhost:8080/report.html</b></p>');
+    return;
+  }
+
+  var importmapOk = typeof HTMLScriptElement !== 'undefined' &&
+    HTMLScriptElement.supports && HTMLScriptElement.supports('importmap');
+  if (!importmapOk) {
+    fail('<p>Your browser does not support ES Module importmap. Please use a recent version of Chrome / Edge (120+).</p>');
+    return;
+  }
+
+  window.__showBootError = function (html) {
+    fail(html);
+  };
+
+  // The module script sets window.__appStarted when it runs; timeout means it failed.
+  setTimeout(function () {
+    if (!window.__appStarted) {
+      window.__showBootError(
+        '<p>Page scripts failed to load. Make sure you open this page via <b>python cli.py serve out</b> ' +
+        'and use a recent version of Chrome / Edge (120+).</p>' +
+        '<p>If it still fails, press F12 and check the Console for errors.</p>'
+      );
+    }
+  }, 6000);
+})();
+</script>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
