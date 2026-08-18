@@ -630,7 +630,11 @@ function setupLoader() {
       const res = await fetch('/api/compare', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ oldName: f1.name, newName: f2.name }),
+        body: JSON.stringify({
+          oldName: f1.name,
+          newName: f2.name,
+          derivedProps: getDerivedProps(),
+        }),
       });
       let data = {};
       try { data = await res.json(); } catch { /* non-JSON response */ }
@@ -646,6 +650,113 @@ function setupLoader() {
   });
 }
 
+// ---------------------------------------------------------------- settings
+
+const STORAGE_KEY = 'ifc-compare:derivedProps';
+
+function getDerivedProps() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }
+}
+
+async function loadPresets() {
+  try {
+    const res = await fetch('/api/presets');
+    const data = await res.json();
+    renderSettings(data.presets || {});
+  } catch (err) {
+    $('#settings-groups').innerHTML = '<div class="muted">Failed to load presets. Is the server running via cli.py serve?</div>';
+  }
+}
+
+function renderSettings(presetsData) {
+  const saved = getDerivedProps();
+  const groups = Object.entries(presetsData).map(([software, group]) => `
+    <div class="settings-group" data-group="${esc(software)}">
+      <div class="settings-group-head">
+        <span>${esc(software)}</span>
+        <span class="settings-group-actions">
+          <button type="button" class="link-btn" data-action="select-all">Select all</button>
+          <button type="button" class="link-btn" data-action="clear-all">Clear</button>
+        </span>
+      </div>
+      ${group.note ? `<div class="settings-group-note">${esc(group.note)}</div>` : ''}
+      <div class="settings-grid">
+        ${group.props.map(([name, desc]) => `
+          <label class="settings-prop" title="${esc(desc)}">
+            <input type="checkbox" data-prop="${esc(name)}" ${saved.includes(name) ? 'checked' : ''}>
+            <span>${esc(name)}</span>
+          </label>`).join('')}
+      </div>
+    </div>`).join('');
+  $('#settings-groups').innerHTML = groups;
+}
+
+function setupSettings() {
+  const dialog = $('#settings-dialog');
+
+  const persist = () => {
+    const checked = [...dialog.querySelectorAll('#settings-groups input[type=checkbox]:checked')]
+      .map((cb) => cb.dataset.prop);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(checked));
+    return checked;
+  };
+
+  $('#btn-settings').addEventListener('click', () => {
+    dialog.hidden = false;
+    loadPresets();
+  });
+  $('#settings-cancel').addEventListener('click', () => { dialog.hidden = true; });
+  dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.hidden = true; });
+
+  // 勾选状态即时保存：改一个就存一个，关闭再打开不会回到旧状态
+  $('#settings-groups').addEventListener('change', () => { persist(); });
+
+  $('#settings-reset').addEventListener('click', () => {
+    dialog.querySelectorAll('#settings-groups input[type=checkbox]').forEach((cb) => { cb.checked = false; });
+    persist();
+  });
+
+  // 每个软件组的 Select all / Clear（事件委托，组是动态渲染的）
+  $('#settings-groups').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    const group = btn.closest('.settings-group');
+    const check = btn.dataset.action === 'select-all';
+    group.querySelectorAll('input[type=checkbox]').forEach((cb) => { cb.checked = check; });
+    persist();
+  });
+
+  $('#settings-save').addEventListener('click', async () => {
+    const checked = persist();
+    dialog.hidden = true;
+    // 保存后立即用当前已上传的模型重新比对，直接看到新规则的效果
+    setStatus(checked.length
+      ? `Saved ${checked.length} rules — re-comparing the current models…`
+      : 'No rules saved — re-comparing with the default classification…');
+    const current = state.report ? state.report.meta : null;
+    try {
+      const res = await fetch('/api/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          oldName: (current && current.oldFile) || 'old.ifc',
+          newName: (current && current.newFile) || 'new.ifc',
+          derivedProps: checked,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        setStatus('Re-compare skipped: ' + (data.error || `HTTP ${res.status}`) + ' — use Load IFC to pick models first.', true);
+        return;
+      }
+      location.href = (data.url || '/report.html') + '?t=' + Date.now();
+    } catch (err) {
+      console.error(err);
+      setStatus('Re-compare failed: ' + err.message, true);
+    }
+  });
+}
+
 // ---------------------------------------------------------------- main
 
 async function main() {
@@ -653,6 +764,7 @@ async function main() {
   setupUi();
   setupSearch();
   setupLoader();
+  setupSettings();
   setStatus('Loading…');
 
   try {

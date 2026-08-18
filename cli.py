@@ -18,7 +18,7 @@ import time
 
 import ifcopenshell
 
-from ifc_compare import VERSION, diff, export, samples
+from ifc_compare import VERSION, diff, export, presets, samples
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIEWER_DIR = os.path.join(BASE_DIR, "viewer")
@@ -33,12 +33,27 @@ def cmd_samples(args) -> int:
     return 0
 
 
-def run_compare(old_path, new_path, out_dir, jobs, old_name=None, new_name=None):
+def _load_classification(args):
+    """构建分类规则配置：--config 优先（custom），否则 --classification 预设。"""
+    if args.config:
+        with open(args.config, encoding="utf-8") as f:
+            config = json.load(f)
+        config.setdefault("mode", "custom")
+        return config
+    if args.classification:
+        return {"mode": args.classification}
+    return None
+
+
+def run_compare(old_path, new_path, out_dir, jobs, old_name=None, new_name=None, classification=None):
     """执行完整比对流水线（解析→比对→导出→拷贝查看器），返回统计信息 dict。"""
     t0 = time.time()
     old = ifcopenshell.open(old_path)
     new = ifcopenshell.open(new_path)
-    report = diff.compare_models(old, new, old_file=old_name or old_path, new_file=new_name or new_path)
+    report = diff.compare_models(
+        old, new, old_file=old_name or old_path, new_file=new_name or new_path,
+        classification=classification,
+    )
 
     models_dir = os.path.join(out_dir, "models")
     os.makedirs(models_dir, exist_ok=True)
@@ -81,7 +96,10 @@ def cmd_compare(args) -> int:
         return 2
 
     print(f"Comparing: {args.old}  vs  {args.new}")
-    result = run_compare(args.old, args.new, args.out, args.jobs)
+    classification = _load_classification(args)
+    if classification:
+        print(f"  classification: {classification.get('mode')}")
+    result = run_compare(args.old, args.new, args.out, args.jobs, classification=classification)
     counts = result["counts"]
     print()
     print("Done:")
@@ -124,6 +142,11 @@ def cmd_serve(args) -> int:
             self.end_headers()
             self.wfile.write(data)
 
+        def do_GET(self):
+            if urllib.parse.urlparse(self.path).path == "/api/presets":
+                return self._json({"ok": True, "presets": presets.SOFTWARE_PRESETS})
+            return super().do_GET()
+
         def do_POST(self):
             parsed = urllib.parse.urlparse(self.path)
             try:
@@ -156,6 +179,24 @@ def cmd_serve(args) -> int:
                     # in-process calls would use the code loaded at server start.
                     cmd = [sys.executable, os.path.join(BASE_DIR, "cli.py"), "compare",
                            old_path, new_path, "-o", directory, "--jobs", str(jobs)]
+                    cls_mode = body.get("classification")
+                    derived_props = body.get("derivedProps")
+                    if isinstance(derived_props, list) and derived_props:
+                        # 设置页勾选的派生参数 → 写临时配置，子进程按 custom 规则比对
+                        config_path = os.path.join(uploads_dir, "_classification.json")
+                        with open(config_path, "w", encoding="utf-8") as f:
+                            json.dump(
+                                {
+                                    "mode": "custom",
+                                    "derivedSets": ["Qto_*", "Dimensions"],
+                                    "derivedProps": [str(p) for p in derived_props if p],
+                                },
+                                f,
+                                ensure_ascii=False,
+                            )
+                        cmd += ["--config", config_path]
+                    elif cls_mode in ("default", "balanced", "custom"):
+                        cmd += ["--classification", cls_mode]
                     try:
                         proc = subprocess.run(cmd, capture_output=True, text=True,
                                               encoding="utf-8", errors="replace")
@@ -257,6 +298,11 @@ def main(argv=None) -> int:
     p_cmp.add_argument("-o", "--out", default="out", help="output directory (default: out)")
     p_cmp.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
                        help="parallel processes for geometry export (default: CPU count; use 1 on Windows issues)")
+    p_cmp.add_argument("--classification", choices=["default", "balanced", "custom"], default=None,
+                       help="derived-property rule: default (only Qto/Dimensions count as derived), "
+                       "balanced (measured props like Span/Slope/Length also), custom (see --config)")
+    p_cmp.add_argument("--config", default=None,
+                       help='JSON config for custom classification: {"derivedSets": ["Qto_*", "Pset_BeamCommon"], "derivedProps": ["Span"]}')
     p_cmp.set_defaults(func=cmd_compare)
 
     p_smp = sub.add_parser("samples", help="generate sample IFC files covering all six change states")

@@ -59,6 +59,46 @@ _METADATA_PROP_NAMES = {
 # 几何派生属性集（尺寸/测量值随几何联动，处理方式同 Qto 量值）
 _GEOM_LINKED_PSETS = {"Dimensions"}
 
+# 分类规则配置：几何变化时，哪些属性变化算作“派生量联动”（不计为参数修改）
+# mode:
+#   default   —— 仅 Qto_ 前缀与 Dimensions 集算派生量（保守，宁可多报 Both）
+#   balanced  —— 额外把标准属性集中测量类属性（Span/Slope/Length…）算派生量
+#   custom    —— 使用 derivedSets / derivedProps 自定义清单
+DEFAULT_CLASSIFICATION = {
+    "mode": "default",
+    "derivedSets": ["Qto_*", "Dimensions"],
+    "derivedProps": [],
+}
+
+_MEASURE_PROP_NAMES = {
+    "Span", "Slope", "Length", "Width", "Height", "Thickness", "Depth",
+    "Area", "NetArea", "GrossArea", "Volume", "Perimeter",
+    "Elevation", "Elevation at Bottom", "Elevation at Top", "Offset", "Level",
+}
+
+
+def _match_set(name, patterns):
+    for pattern in patterns:
+        if pattern.endswith("*") and name.startswith(pattern[:-1]):
+            return True
+        if name == pattern:
+            return True
+    return False
+
+
+def _is_derived(pset_name, prop_name, classification):
+    """判断一个属性变化是否属于“几何派生的联动量”（不提升为参数修改）。"""
+    mode = classification.get("mode", "default")
+    if mode == "custom":
+        sets = classification.get("derivedSets") or []
+        props = set(classification.get("derivedProps") or [])
+        return _match_set(pset_name, sets) or prop_name in props
+    sets = classification.get("derivedSets") or DEFAULT_CLASSIFICATION["derivedSets"]
+    derived = _match_set(pset_name, sets)
+    if mode == "balanced":
+        derived = derived or prop_name in _MEASURE_PROP_NAMES
+    return derived
+
 
 def _definition_props(definition):
     """读取一个 IfcPropertySet / IfcElementQuantity 的 {属性名: 值}。"""
@@ -214,8 +254,13 @@ def _element_summary(entity):
     }
 
 
-def compare_models(old, new, old_file="", new_file=""):
-    """比对两个 IFC 模型，返回报告 dict（写入 diff.json 的结构）。"""
+def compare_models(old, new, old_file="", new_file="", classification=None):
+    """比对两个 IFC 模型，返回报告 dict（写入 diff.json 的结构）。
+
+    classification: 分类规则配置（见 DEFAULT_CLASSIFICATION）。
+    """
+    classification = dict(classification or DEFAULT_CLASSIFICATION)
+    classification.setdefault("mode", "default")
     old_elements = collect_elements(old)
     new_elements = collect_elements(new)
 
@@ -257,8 +302,8 @@ def compare_models(old, new, old_file="", new_file=""):
                         "old": a.get(prop_name),
                         "new": b.get(prop_name),
                     }
-                    if pset_name.startswith("Qto_") or pset_name in _GEOM_LINKED_PSETS:
-                        # 量值/尺寸是几何的派生测量值：几何变时它自然联动，不视为参数修改
+                    if _is_derived(pset_name, prop_name, classification):
+                        # 派生量是几何的测量结果：几何变时它自然联动，不视为参数修改
                         change["quantity"] = True
                     else:
                         has_param_change = True
@@ -313,6 +358,7 @@ def compare_models(old, new, old_file="", new_file=""):
                 "both": sum(1 for c in changed if c["kind"] == "both"),
                 "unchanged": unchanged,
             },
+            "classification": classification,
         },
         "elements": {"added": added, "deleted": deleted, "changed": changed},
     }

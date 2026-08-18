@@ -35,6 +35,7 @@
 
   <div class="actions">
     <button class="btn primary" id="btn-load" title="Pick two IFC files and compare them locally">Load IFC</button>
+    <button class="btn" id="btn-settings" title="Configure which parameters are treated as geometry-derived">Settings</button>
     <button class="btn" id="btn-fit" title="Fit the whole model into view">Fit View</button>
     <button class="btn" id="btn-diff" title="Focus the view on all changed elements">Focus Changes</button>
     <button class="btn" id="btn-panel" title="Show/hide the change list">Changes</button>
@@ -82,6 +83,25 @@
     <div class="dialog-actions">
       <button class="btn" id="loader-cancel">Cancel</button>
       <button class="btn primary" id="loader-start" disabled>Compare</button>
+    </div>
+  </div>
+</div>
+
+<div id="settings-dialog" class="dialog-overlay" hidden>
+  <div class="dialog settings-dialog">
+    <div class="dialog-title">Comparison Settings</div>
+    <p class="dialog-hint">
+      Checked parameters are treated as <b>geometry-derived values</b>: when an element's geometry
+      changes and only these linked values change with it, the element is classified as
+      <b>Geometry</b> (yellow) instead of <b>Both</b> (purple). Settings are saved in your browser.
+      <b>Saving automatically re-runs the comparison on the currently loaded models</b>, so you see
+      the result immediately.
+    </p>
+    <div id="settings-groups"><div class="muted">Loading presets…</div></div>
+    <div class="dialog-actions">
+      <button class="btn" id="settings-reset" title="Clear all checkboxes in every group">Clear all</button>
+      <button class="btn" id="settings-cancel">Cancel</button>
+      <button class="btn primary" id="settings-save">Save</button>
     </div>
   </div>
 </div>

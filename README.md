@@ -17,6 +17,11 @@ an HTML report with a **synchronized dual 3D viewer** for design change reviews.
   - Classification rule: geometry-change × parameter-change matrix. Quantity/Dimensions
     values that follow geometry are shown as "Qty" and do not promote to "Both";
     Revit metadata (Edited by / Created by etc.) is ignored
+  - **Settings dialog** (Settings button): check which parameters count as
+    geometry-derived values, grouped by software (Revit, Civil 3D, Tekla, Bentley).
+    Checked parameters don't promote an element to "Both" when only they change along
+    with the geometry. Settings are stored in the browser and applied to the next
+    comparison
 - **HTML report + dual 3D viewer** (Three.js, zero build, offline-ready)
   - Side-by-Side: drag the divider; left = old model, right = new model, fully
     synchronized rotation / zoom (photo-compare slider principle)
@@ -66,6 +71,12 @@ Note: the report uses ES modules + importmap and must be served over HTTP
 
 - `-o, --out`: output directory (default `out`)
 - `--jobs`: parallel processes for geometry export (default: CPU count; use 1 if a platform misbehaves)
+- `--classification default|balanced`: how geometry-linked property changes are classified
+  - `default` — only `Qto_*` / `Dimensions` values count as derived (conservative: when in doubt, report Both)
+  - `balanced` — measured property names (Span, Slope, Length, Height, Area, Volume, Elevation, Offset…) in standard property sets also count as derived
+- `--config file.json`: custom derived-value rules, e.g.
+  `{"derivedSets": ["Qto_*", "Dimensions", "Pset_BeamCommon"], "derivedProps": ["Cut Length"]}`
+  (set entries support `*` prefixes)
 
 ## Output layout
 
