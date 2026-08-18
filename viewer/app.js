@@ -381,6 +381,56 @@ function itemHtml(key, item) {
   </article>`;
 }
 
+function csvCell(value) {
+  const s = value == null ? '' : String(value);
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function exportCsv() {
+  if (!state.report) {
+    setStatus('No report loaded yet.');
+    return;
+  }
+  const rows = [['State', 'GUID', 'Name', 'Type', 'Category', 'Property Set', 'Property', 'Old', 'New']];
+  const { added, deleted, changed } = state.report.elements;
+  for (const [stateLabel, items] of [['Added', added], ['Deleted', deleted]]) {
+    for (const item of items || []) {
+      const entries = [];
+      for (const [pset, props] of Object.entries(item.properties || {})) {
+        for (const [prop, value] of Object.entries(props || {})) {
+          entries.push(['Property', pset, prop, '', fmtVal(value)]);
+        }
+      }
+      if (!entries.length) {
+        rows.push([stateLabel, item.guid, item.name, item.type, '', '', '', '', '']);
+      } else {
+        for (const e of entries) rows.push([stateLabel, item.guid, item.name, item.type, ...e]);
+      }
+    }
+  }
+  for (const item of changed || []) {
+    const stateLabel = STATUS[item.kind] ? STATUS[item.kind].label : item.kind;
+    for (const c of item.changes || []) {
+      rows.push([stateLabel, item.guid, item.name, item.type,
+        c.quantity ? 'Qty' : 'Property', c.pset, c.property, fmtVal(c.old), fmtVal(c.new)]);
+    }
+    if (item.geometryChanged) {
+      rows.push([stateLabel, item.guid, item.name, item.type,
+        'Geometry', '', 'Geometry/position', 'changed', 'changed']);
+    }
+  }
+  const csv = rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ifc-diff-changes.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+  setStatus(`Exported change list: ${rows.length - 1} rows → ifc-diff-changes.csv`);
+}
+
 function renderPanel() {
   renderStats();
   const { added, deleted, changed } = state.report.elements;
@@ -515,6 +565,7 @@ function setupUi() {
 
   $('#btn-fit').addEventListener('click', fit);
   $('#btn-diff').addEventListener('click', fitDifferences);
+  $('#btn-export').addEventListener('click', exportCsv);
 
   $('#btn-panel').addEventListener('click', () => document.body.classList.toggle('panel-hidden'));
   $('#panel-close').addEventListener('click', () => document.body.classList.add('panel-hidden'));

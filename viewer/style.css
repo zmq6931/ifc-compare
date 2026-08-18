@@ -144,6 +144,16 @@ body.panel-hidden #panel { display: none; }
   font-weight: 600;
   font-size: 14px;
 }
+.panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.panel-head-actions .btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
 
 #search {
   margin: 8px 12px;
