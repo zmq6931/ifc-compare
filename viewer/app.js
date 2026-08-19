@@ -506,10 +506,9 @@ function toggleSelect(guid) {
     selectedGuids.delete(guid);
   } else {
     selectedGuids.add(guid);
-    // 联动左侧栏：展开对应条目并滚动到可见
+    // 联动左侧栏：仅滚动到对应条目，展开由 chev 图标独立控制
     const item = document.querySelector(`#list .item[data-guid="${CSS.escape(guid)}"]`);
     if (item) {
-      item.classList.add('open');
       item.scrollIntoView({ block: 'nearest' });
     }
   }
