@@ -681,7 +681,7 @@ function renderSettings(presetsData) {
       </div>
       ${group.note ? `<div class="settings-group-note">${esc(group.note)}</div>` : ''}
       <div class="settings-grid">
-        ${group.props.map(([name, desc]) => `
+        ${[...group.props].sort((a, b) => a[0].localeCompare(b[0], 'en')).map(([name, desc]) => `
           <label class="settings-prop" title="${esc(desc)}">
             <input type="checkbox" data-prop="${esc(name)}" ${saved.includes(name) ? 'checked' : ''}>
             <span>${esc(name)}</span>

@@ -25,6 +25,7 @@ SOFTWARE_PRESETS = {
             ("System Length", "MEP system run length"),
             ("Level Offset", "Offset from level"),
             ("Start Extension", "Geometric Position: start extension"),
+            ("End Extension", "Geometric Position: end extension"),
             ("Start Join Cutback", "Steel connection cutback (start)"),
             ("End Join Cutback", "Steel connection cutback (end)"),
             ("Base Offset", "Base offset"),
