@@ -1,10 +1,13 @@
-"""几何导出：把 IFC 模型导出为按差异状态分组的 glTF 2.0（外部 .bin）。
+"""几何导出：把 IFC 模型导出为 glTF 2.0（外部 .bin）。
 
-每个状态一个 mesh + 一个材质（颜色烘焙），浏览器端无需逐构件着色逻辑：
+每个构件一个独立 mesh + node，node.extras 携带 guid / 状态 / 名称 / 类型，
+材质按差异状态共享（颜色烘焙）。浏览器端可逐构件拾取与高亮：
 - unchanged: 半透明灰
 - added:     绿
 - deleted:   红
-- changed:   黄
+- geom:      黄
+- param:     蓝
+- both:      紫
 """
 from __future__ import annotations
 
@@ -44,23 +47,36 @@ def _geom_settings():
 def collect_geometry(model_path, status_of_guid, jobs=1):
     """遍历模型收集分状态几何。
 
-    返回 (buckets, bbox_min, bbox_max, 导出构件数)。顶点先用 float64 保存，
-    写入 glTF 时才平移到原点附近并转 float32，避免大地坐标（如 81 万米）
-    在 float32 中的量化误差导致渲染时面片微缝闪烁。
+    返回 (buckets, bbox_min, bbox_max, 导出构件数)。buckets[status] 是元素列表，
+    每个元素为独立几何桶 dict：{guid, name, type, pos, idx, min, max}。
+    顶点先用 float64 保存，写入 glTF 时才平移到原点附近并转 float32，
+    避免大地坐标（如 81 万米）在 float32 中的量化误差导致渲染时面片微缝闪烁。
     """
     model = ifcopenshell.open(model_path)
     iterator = ifcopenshell.geom.iterator(_geom_settings(), model, jobs)
 
-    buckets = {
-        status: {
+    buckets = {status: [] for status in STATUS_ORDER}
+
+    def new_element(guid):
+        """为单个构件创建独立几何桶：每构件独立 mesh/node，前端才能拾取与高亮。"""
+        name = guid
+        etype = ""
+        try:
+            ent = model.by_guid(guid)
+            if ent is not None:
+                name = getattr(ent, "Name", None) or guid
+                etype = ent.is_a()
+        except Exception:
+            pass
+        return {
+            "guid": guid,
+            "name": name,
+            "type": etype,
             "pos": array.array("d"),
-            "nrm": array.array("f"),
             "idx": array.array("I"),
             "min": [math.inf] * 3,
             "max": [-math.inf] * 3,
         }
-        for status in STATUS_ORDER
-    }
 
     exported = 0
     if iterator.initialize():
@@ -79,8 +95,7 @@ def collect_geometry(model_path, status_of_guid, jobs=1):
                     verts = geometry.verts
                     faces = geometry.faces
                     if len(verts) and len(faces):
-                        bucket = buckets[status]
-                        base = len(bucket["pos"]) // 3
+                        el = new_element(shape.guid)
                         mat = _matrix_of(shape)  # 行主序 4x4；无放置时为 None
                         # ifcopenshell >= 0.8.1 返回扁平数组 [x,y,z,...]；旧版返回 (x,y,z) 元组列表
                         flat = isinstance(verts[0], (int, float))
@@ -89,57 +104,57 @@ def collect_geometry(model_path, status_of_guid, jobs=1):
                                 x, y, z = verts[i], verts[i + 1], verts[i + 2]
                                 if mat is not None:
                                     x, y, z = _apply(mat, x, y, z)
-                                bucket["pos"].extend((x, y, z))
-                                if x < bucket["min"][0]:
-                                    bucket["min"][0] = x
-                                if y < bucket["min"][1]:
-                                    bucket["min"][1] = y
-                                if z < bucket["min"][2]:
-                                    bucket["min"][2] = z
-                                if x > bucket["max"][0]:
-                                    bucket["max"][0] = x
-                                if y > bucket["max"][1]:
-                                    bucket["max"][1] = y
-                                if z > bucket["max"][2]:
-                                    bucket["max"][2] = z
+                                el["pos"].extend((x, y, z))
+                                if x < el["min"][0]:
+                                    el["min"][0] = x
+                                if y < el["min"][1]:
+                                    el["min"][1] = y
+                                if z < el["min"][2]:
+                                    el["min"][2] = z
+                                if x > el["max"][0]:
+                                    el["max"][0] = x
+                                if y > el["max"][1]:
+                                    el["max"][1] = y
+                                if z > el["max"][2]:
+                                    el["max"][2] = z
                             # 默认三角化输出，faces 为三角形索引扁平序列
                             for idx in faces:
-                                bucket["idx"].append(base + idx)
+                                el["idx"].append(idx)
                         else:
                             for x, y, z in verts:
                                 if mat is not None:
                                     x, y, z = _apply(mat, x, y, z)
-                                bucket["pos"].extend((x, y, z))
-                                if x < bucket["min"][0]:
-                                    bucket["min"][0] = x
-                                if y < bucket["min"][1]:
-                                    bucket["min"][1] = y
-                                if z < bucket["min"][2]:
-                                    bucket["min"][2] = z
-                                if x > bucket["max"][0]:
-                                    bucket["max"][0] = x
-                                if y > bucket["max"][1]:
-                                    bucket["max"][1] = y
-                                if z > bucket["max"][2]:
-                                    bucket["max"][2] = z
+                                el["pos"].extend((x, y, z))
+                                if x < el["min"][0]:
+                                    el["min"][0] = x
+                                if y < el["min"][1]:
+                                    el["min"][1] = y
+                                if z < el["min"][2]:
+                                    el["min"][2] = z
+                                if x > el["max"][0]:
+                                    el["max"][0] = x
+                                if y > el["max"][1]:
+                                    el["max"][1] = y
+                                if z > el["max"][2]:
+                                    el["max"][2] = z
                             for face in faces:
                                 # 防御性三角化（扇形）
                                 for k in range(1, len(face) - 1):
-                                    bucket["idx"].extend(
-                                        (base + face[0], base + face[k], base + face[k + 1])
-                                    )
+                                    el["idx"].extend((face[0], face[k], face[k + 1]))
+                        buckets[status].append(el)
                         exported += 1
             if not iterator.next():
                 break
 
     bbox_min = [math.inf] * 3
     bbox_max = [-math.inf] * 3
-    for bucket in buckets.values():
-        for axis in range(3):
-            if bucket["min"][axis] < bbox_min[axis]:
-                bbox_min[axis] = bucket["min"][axis]
-            if bucket["max"][axis] > bbox_max[axis]:
-                bbox_max[axis] = bucket["max"][axis]
+    for elements in buckets.values():
+        for el in elements:
+            for axis in range(3):
+                if el["min"][axis] < bbox_min[axis]:
+                    bbox_min[axis] = el["min"][axis]
+                if el["max"][axis] > bbox_max[axis]:
+                    bbox_max[axis] = el["max"][axis]
     if bbox_min[0] == math.inf:
         bbox_min, bbox_max = [0.0] * 3, [0.0] * 3
     return buckets, tuple(bbox_min), tuple(bbox_max), exported
@@ -186,6 +201,7 @@ def _apply(mat, x, y, z):
 
 
 def _write_gltf(gltf_path, buckets, origin=(0.0, 0.0, 0.0)):
+    """每个元素独立 mesh + node（extras 带 guid/status），材质按状态共享。"""
     materials = []
     status_material = {}
     for status in STATUS_ORDER:
@@ -215,84 +231,82 @@ def _write_gltf(gltf_path, buckets, origin=(0.0, 0.0, 0.0)):
             data.append(0)
 
     for status in STATUS_ORDER:
-        bucket = buckets[status]
-        if not len(bucket["idx"]):
-            continue
+        for el in buckets[status]:
+            if not len(el["idx"]):
+                continue
 
-        ox, oy, oz = origin
-        pos_f = array.array("f")
-        pos_d = bucket["pos"]
-        for i in range(0, len(pos_d) - 2, 3):
-            pos_f.append(pos_d[i] - ox)
-            pos_f.append(pos_d[i + 1] - oy)
-            pos_f.append(pos_d[i + 2] - oz)
-        pos_bytes = pos_f.tobytes()
-        nrm_bytes = bucket["nrm"].tobytes()
-        idx_bytes = bucket["idx"].tobytes()
-        has_normals = len(nrm_bytes) > 0
+            ox, oy, oz = origin
+            pos_f = array.array("f")
+            pos_d = el["pos"]
+            for i in range(0, len(pos_d) - 2, 3):
+                pos_f.append(pos_d[i] - ox)
+                pos_f.append(pos_d[i + 1] - oy)
+                pos_f.append(pos_d[i + 2] - oz)
+            pos_bytes = pos_f.tobytes()
+            idx_bytes = el["idx"].tobytes()
 
-        # POSITION
-        pad4(buffer_data)
-        pos_offset = len(buffer_data)
-        buffer_data += pos_bytes
-        buffer_views.append(
-            {"buffer": 0, "byteOffset": pos_offset, "byteLength": len(pos_bytes), "target": 34962}
-        )
-        accessors.append(
-            {
-                "bufferView": len(buffer_views) - 1,
-                "byteOffset": 0,
-                "componentType": 5126,
-                "count": len(pos_bytes) // 12,
-                "type": "VEC3",
-                "min": [round(bucket["min"][i] - origin[i], 4) for i in range(3)],
-                "max": [round(bucket["max"][i] - origin[i], 4) for i in range(3)],
-            }
-        )
-        pos_acc = len(accessors) - 1
-
-        nrm_acc = None
-        if has_normals:
+            # POSITION
             pad4(buffer_data)
-            nrm_offset = len(buffer_data)
-            buffer_data += nrm_bytes
+            pos_offset = len(buffer_data)
+            buffer_data += pos_bytes
             buffer_views.append(
-                {"buffer": 0, "byteOffset": nrm_offset, "byteLength": len(nrm_bytes), "target": 34962}
+                {"buffer": 0, "byteOffset": pos_offset, "byteLength": len(pos_bytes), "target": 34962}
             )
             accessors.append(
                 {
                     "bufferView": len(buffer_views) - 1,
                     "byteOffset": 0,
                     "componentType": 5126,
-                    "count": len(nrm_bytes) // 12,
+                    "count": len(pos_bytes) // 12,
                     "type": "VEC3",
+                    "min": [round(el["min"][i] - origin[i], 4) for i in range(3)],
+                    "max": [round(el["max"][i] - origin[i], 4) for i in range(3)],
                 }
             )
-            nrm_acc = len(accessors) - 1
+            pos_acc = len(accessors) - 1
 
-        # indices（UInt32）
-        pad4(buffer_data)
-        idx_offset = len(buffer_data)
-        buffer_data += idx_bytes
-        buffer_views.append(
-            {"buffer": 0, "byteOffset": idx_offset, "byteLength": len(idx_bytes), "target": 34963}
-        )
-        accessors.append(
-            {
-                "bufferView": len(buffer_views) - 1,
-                "byteOffset": 0,
-                "componentType": 5125,
-                "count": len(idx_bytes) // 4,
-                "type": "SCALAR",
-            }
-        )
-        idx_acc = len(accessors) - 1
+            # indices（UInt32）
+            pad4(buffer_data)
+            idx_offset = len(buffer_data)
+            buffer_data += idx_bytes
+            buffer_views.append(
+                {"buffer": 0, "byteOffset": idx_offset, "byteLength": len(idx_bytes), "target": 34963}
+            )
+            accessors.append(
+                {
+                    "bufferView": len(buffer_views) - 1,
+                    "byteOffset": 0,
+                    "componentType": 5125,
+                    "count": len(idx_bytes) // 4,
+                    "type": "SCALAR",
+                }
+            )
+            idx_acc = len(accessors) - 1
 
-        primitive = {"attributes": {"POSITION": pos_acc}, "indices": idx_acc, "material": status_material[status]}
-        if nrm_acc is not None:
-            primitive["attributes"]["NORMAL"] = nrm_acc
-        meshes.append({"name": status, "primitives": [primitive]})
-        mesh_nodes.append({"name": status, "mesh": len(meshes) - 1})
+            meshes.append(
+                {
+                    "name": el["guid"],
+                    "primitives": [
+                        {
+                            "attributes": {"POSITION": pos_acc},
+                            "indices": idx_acc,
+                            "material": status_material[status],
+                        }
+                    ],
+                }
+            )
+            mesh_nodes.append(
+                {
+                    "name": el["guid"],
+                    "mesh": len(meshes) - 1,
+                    "extras": {
+                        "guid": el["guid"],
+                        "status": status,
+                        "name": el["name"],
+                        "type": el["type"],
+                    },
+                }
+            )
 
     nodes = [{"name": "root", "children": [i + 1 for i in range(len(mesh_nodes))]}] + mesh_nodes
 

@@ -26,10 +26,12 @@ const state = {
   split: 0.5,
   visible: { added: true, deleted: true, geom: true, param: true, both: true, unchanged: true },
   meshGroups: {},   // status -> [{mesh, side}]
+  guidMeshes: {},   // guid -> [{mesh, side, status, baseMaterial}]
   report: null,
 };
 
 let renderer, camera, controls;
+const raycaster = new THREE.Raycaster();
 let sceneOld, sceneNew, groupOld, groupNew;
 let dirOld, dirNew;
 let gridOld = null, gridNew = null;
@@ -170,8 +172,16 @@ async function loadModels() {
 
 function collectMeshes(root, side) {
   root.traverse((obj) => {
-    if (obj.isMesh && STATUS[obj.name]) {
-      (state.meshGroups[obj.name] = state.meshGroups[obj.name] || []).push({ mesh: obj, side });
+    if (!obj.isMesh) return;
+    const st = obj.userData.status || obj.name;
+    if (!STATUS[st]) return;
+    obj.userData.side = side;
+    (state.meshGroups[st] = state.meshGroups[st] || []).push({ mesh: obj, side });
+    const guid = obj.userData.guid || obj.name;
+    if (guid) {
+      (state.guidMeshes[guid] = state.guidMeshes[guid] || []).push({
+        mesh: obj, side, status: st, baseMaterial: obj.material,
+      });
     }
   });
 }
@@ -181,11 +191,12 @@ function postProcessMaterials(root) {
     if (!obj.isMesh) return;
     const m = obj.material;
     if (!m) return;
+    const st = STATUS[obj.userData.status || obj.name];
+    if (!st) return;
     // glTF 未携带法线：flatShading 让三渲二直接按面着色，避免自动平滑法线把建筑体量“磨圆”
     m.flatShading = true;
     // 高亮构件自带状态色微光，暗面/细小构件更醒目（未变灰除外）
-    const st = STATUS[obj.name];
-    if (st && obj.name !== 'unchanged' && st.color) {
+    if (obj.userData.status !== 'unchanged' && st.color) {
       m.emissive = new THREE.Color(st.color);
       m.emissiveIntensity = 0.3;
     }
@@ -367,7 +378,7 @@ function itemHtml(key, item) {
   }
   const text = `${item.name} ${item.type} ${item.guid}`.toLowerCase();
   return `
-  <article class="item${open}" data-text="${esc(text)}">
+  <article class="item${open}" data-text="${esc(text)}" data-guid="${esc(item.guid)}">
     <button class="item-head">
       <span class="badge" style="color:${STATUS[key].text};background:${STATUS[key].bg}">${STATUS[key].label}</span>
       <span class="iname">${esc(item.name)}</span>
@@ -450,8 +461,17 @@ function renderPanel() {
     $('#list').innerHTML = '<div class="muted empty">No reportable differences between the two models.</div>';
   }
   $('#list').addEventListener('click', (e) => {
-    const head = e.target.closest('.item-head');
-    if (head) head.closest('.item').classList.toggle('open');
+    const item = e.target.closest('.item');
+    if (!item) return;
+    // chev 图标：展开/折叠属性详情
+    if (e.target.closest('.chev')) {
+      item.classList.toggle('open');
+      return;
+    }
+    // 条目头部：选中/取消选中 → 模型高亮 + 多选
+    if (e.target.closest('.item-head')) {
+      toggleSelect(item.dataset.guid);
+    }
   });
 }
 
@@ -467,6 +487,66 @@ function setupSearch() {
       const any = [...sec.querySelectorAll('.item')].some((i) => i.style.display !== 'none');
       sec.style.display = any ? '' : 'none';
     });
+  });
+}
+
+// ---------------------------------------------------------------- selection
+
+const HIGHLIGHT_COLOR = 0xff8a00;
+const selectedGuids = new Set();
+
+function clearSelection() {
+  selectedGuids.clear();
+  refreshHighlights();
+}
+
+function toggleSelect(guid) {
+  if (!guid) return;
+  if (selectedGuids.has(guid)) {
+    selectedGuids.delete(guid);
+  } else {
+    selectedGuids.add(guid);
+    // 联动左侧栏：展开对应条目并滚动到可见
+    const item = document.querySelector(`#list .item[data-guid="${CSS.escape(guid)}"]`);
+    if (item) {
+      item.classList.add('open');
+      item.scrollIntoView({ block: 'nearest' });
+    }
+  }
+  refreshHighlights();
+}
+
+function refreshHighlights() {
+  // 恢复未选中的构件（还原共享基础材质）
+  for (const entries of Object.values(state.guidMeshes)) {
+    for (const en of entries) {
+      if (!selectedGuids.has(en.mesh.userData.guid || en.mesh.name)) {
+        if (en.mesh.material !== en.baseMaterial) en.mesh.material = en.baseMaterial;
+      }
+    }
+  }
+  // 高亮选中的构件（实心 + 橙色自发光，三个视图同步）
+  for (const guid of selectedGuids) {
+    for (const en of state.guidMeshes[guid] || []) {
+      let m = en.mesh.material;
+      if (m === en.baseMaterial) {
+        m = en.baseMaterial.clone();
+        m.flatShading = true;
+      }
+      m.emissive = new THREE.Color(HIGHLIGHT_COLOR);
+      m.emissiveIntensity = 1.0;
+      m.transparent = false;
+      m.opacity = 1;
+      m.depthWrite = true;
+      m.depthTest = true;
+      m.needsUpdate = true;
+      en.mesh.material = m;
+      en.mesh.renderOrder = 3;
+    }
+  }
+  // 同步左侧栏选中样式
+  document.querySelectorAll('#list .item').forEach((el) => {
+    el.classList.toggle('selected', selectedGuids.has(el.dataset.guid));
   });
 }
 
@@ -543,6 +623,7 @@ function applyVisibility() {
       }
     }
   }
+  refreshHighlights();
 }
 
 function setupUi() {
@@ -571,6 +652,44 @@ function setupUi() {
   $('#panel-close').addEventListener('click', () => document.body.classList.add('panel-hidden'));
 
   if (window.innerWidth < 860) document.body.classList.add('panel-hidden');
+
+  // 模型空间点击拾取构件：与左侧栏双向联动。拖拽旋转（位移超阈值）不算点击。
+  let downXY = null;
+  canvas.addEventListener('pointerdown', (e) => { downXY = [e.clientX, e.clientY]; });
+  canvas.addEventListener('click', (e) => {
+    if (e.button !== 0) return;
+    if (downXY && Math.hypot(e.clientX - downXY[0], e.clientY - downXY[1]) > 6) return;
+    const rect = canvas.getBoundingClientRect();
+    const px = (e.clientX - rect.left) / rect.width;
+    const py = (e.clientY - rect.top) / rect.height;
+    const targets = [];
+    for (const [st, objs] of Object.entries(state.meshGroups)) {
+      if (!state.visible[st]) continue;
+      for (const { mesh } of objs) {
+        if (!mesh.visible) continue;
+        // 分割模式：左半屏拾取旧模型，右半屏拾取新模型
+        if (state.mode === 'split' && (px < state.split) !== (mesh.userData.side === 'old')) continue;
+        targets.push(mesh);
+      }
+    }
+    raycaster.setFromCamera(new THREE.Vector2(px * 2 - 1, 1 - py * 2), camera);
+    const hits = raycaster.intersectObjects(targets, false);
+    if (!hits.length) {
+      if (selectedGuids.size) clearSelection();
+      return;
+    }
+    const hit = hits[0].object;
+    const guid = hit.userData.guid || hit.name;
+    if (!guid) return;
+    if (!document.querySelector(`#list .item[data-guid="${CSS.escape(guid)}"]`)) {
+      setStatus(`Unchanged element: ${hit.userData.name || guid} (not in the change list)`);
+      return;
+    }
+    toggleSelect(guid);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') clearSelection();
+  });
 }
 
 // ---------------------------------------------------------------- loader

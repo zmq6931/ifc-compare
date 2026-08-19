@@ -223,6 +223,14 @@ body.panel-hidden #panel { display: none; }
 }
 .item-head:hover { background: #f6f8fa; }
 
+/* 选中条目：橙色高亮，与 3D 中选中构件的高亮色一致 */
+.item.selected .item-head {
+  background: #ffe1bd;
+  box-shadow: inset 3px 0 0 #ff8a00;
+}
+.item.selected .item-head:hover { background: #ffd199; }
+.item.selected .iname { color: #9a5b00; font-weight: 600; }
+
 .badge {
   font-size: 11px;
   padding: 2px 7px;
