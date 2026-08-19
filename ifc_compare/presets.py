@@ -24,6 +24,7 @@ SOFTWARE_PRESETS = {
             ("Elevation at Bottom Survey", "Survey base elevation"),
             ("System Length", "MEP system run length"),
             ("Level Offset", "Offset from level"),
+            ("Start Extension", "Geometric Position: start extension"),
             ("Start Join Cutback", "Steel connection cutback (start)"),
             ("End Join Cutback", "Steel connection cutback (end)"),
             ("Base Offset", "Base offset"),
